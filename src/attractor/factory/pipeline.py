@@ -83,7 +83,7 @@ DARK_FACTORY_DOT = r"""digraph DarkFactorySequential {
     implement [
         shape=box,
         label="Implement",
-        prompt="You are processing work item $current_item.\n\nHere is the full spec (already provided — do NOT re-read from disk):\n\n$current_spec\n\nIMPORTANT RULES:\n- Only implement THIS spec. Do not implement other specs.\n- Do not explore /opt/software-factory/.\n- All code MUST be written under /workspace/output/. Do NOT write files to /workspace/ directly.\n- Do NOT re-read spec files from disk.\n\nExecute the implementation plan below. Make the code changes described. Follow existing code patterns and conventions.\n\n$plan",
+        prompt="You are processing work item $current_item.\n\nHere is the full spec (already provided — do NOT re-read from disk):\n\n$current_spec\n\nIMPORTANT RULES:\n- Only implement THIS spec. Do not implement other specs.\n- Do not explore /opt/software-factory/.\n- All code MUST be written under /workspace/output/. Do NOT write files to /workspace/ directly.\n- Do NOT re-read spec files from disk.\n- Be efficient with file reads: use grep and glob to locate relevant code instead of reading every file. Only read files you need to modify or that are direct dependencies of your changes. Do NOT read the entire codebase.\n\nExecute the implementation plan below. Make the code changes described. Follow existing code patterns and conventions.\n\n$plan",
         timeout=1800,
         fidelity="full",
         max_retries=0
@@ -106,7 +106,7 @@ DARK_FACTORY_DOT = r"""digraph DarkFactorySequential {
         shape=box,
         label="Diagnose",
         output_key="diagnosis",
-        prompt="You are processing work item $current_item.\n\nHere is the full spec (already provided — do NOT re-read from disk):\n\n$current_spec\n\nVerification failed with the following output:\n\n$verification_result\n\nIdentify the root cause of each failure. Determine whether the failures are fixable. Produce a diagnosis with a clear fix strategy for each fixable issue.\n\nIMPORTANT: Only fix issues related to THIS spec. Do not explore /opt/software-factory/.",
+        prompt="You are processing work item $current_item.\n\nHere is the full spec (already provided — do NOT re-read from disk):\n\n$current_spec\n\nVerification failed with the following output:\n\n$verification_result\n\nIdentify the root cause of each failure. Determine whether the failures are fixable. Produce a diagnosis with a clear fix strategy for each fixable issue.\n\nIMPORTANT RULES:\n- Only fix issues related to THIS spec. Do not explore /opt/software-factory/.\n- Be efficient: use grep to locate the relevant code from the error messages. Do NOT read files that are unrelated to the failures.",
         timeout=300,
         fidelity="full",
         reasoning_effort="high"
@@ -115,7 +115,7 @@ DARK_FACTORY_DOT = r"""digraph DarkFactorySequential {
     fix [
         shape=box,
         label="Fix",
-        prompt="You are processing work item $current_item.\n\nHere is the full spec (already provided — do NOT re-read from disk):\n\n$current_spec\n\nApply the fixes described in the following diagnosis:\n\n$diagnosis\n\nMake only the changes needed to fix the identified issues.\n\nIMPORTANT: Do not explore /opt/software-factory/.",
+        prompt="You are processing work item $current_item.\n\nHere is the full spec (already provided — do NOT re-read from disk):\n\n$current_spec\n\nApply the fixes described in the following diagnosis:\n\n$diagnosis\n\nMake only the changes needed to fix the identified issues.\n\nIMPORTANT RULES:\n- Do not explore /opt/software-factory/.\n- Be efficient with file reads: only read the specific files mentioned in the diagnosis. Use grep to locate code if needed. Do NOT re-read files you have already seen.",
         timeout=900,
         fidelity="full",
         max_retries=5,
