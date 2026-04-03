@@ -283,6 +283,27 @@ class FactoryBackend(CodergenBackend):
             model=self.config.model,
             env=self._env,
         )
+
+        # Block reads from the specs directory and the factory's own code.
+        # The spec content is already provided in the prompt; re-reading it
+        # wastes tokens. The factory code is irrelevant to the project.
+        blocked = [
+            os.path.abspath(self.config.specs_dir),
+            "/opt/software-factory",
+        ]
+        registry = profile.tool_registry
+        read_tool = registry.get("read_file")
+        if read_tool:
+            original_executor = read_tool.executor
+            def _guarded_read(args, _orig=original_executor, _blocked=blocked):
+                path = os.path.abspath(args.get("file_path", ""))
+                for prefix in _blocked:
+                    if path.startswith(prefix):
+                        return (f"Error: Reading from {prefix} is not allowed. "
+                                "The spec content is already in your prompt.")
+                return _orig(args)
+            read_tool.executor = _guarded_read
+
         # When max_rounds is 1 or less, don't send tools so the LLM
         # produces a single text response without attempting tool calls.
         no_tools = max_rounds <= 1
