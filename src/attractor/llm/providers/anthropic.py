@@ -247,16 +247,32 @@ class AnthropicAdapter(ProviderAdapter):
         messages = [_message_to_anthropic(m) for m in non_system]
         system = _build_system(request.messages)
 
-        # Mark cache breakpoints for prompt caching:
+        # Mark cache breakpoints for prompt caching (up to 4 allowed):
         # 1. System prompt (stable across all rounds)
         if isinstance(system, str) and system:
             system = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
         elif isinstance(system, list) and system:
             system[-1] = {**system[-1], "cache_control": {"type": "ephemeral"}}
-        # 2. Second-to-last user/tool message (the conversation prefix that
-        #    doesn't change between rounds). The last message is the new one.
+
         user_indices = [i for i, m in enumerate(messages) if m["role"] == "user"]
-        if len(user_indices) >= 2:
+
+        # 2. First user message (contains the initial prompt with the full spec;
+        #    never changes between rounds, so caching it avoids re-tokenizing
+        #    the spec on every LLM call)
+        if user_indices:
+            idx = user_indices[0]
+            msg = messages[idx]
+            if isinstance(msg["content"], list) and msg["content"]:
+                msg["content"][-1] = {**msg["content"][-1], "cache_control": {"type": "ephemeral"}}
+            elif isinstance(msg["content"], str):
+                messages[idx] = {
+                    **msg,
+                    "content": [{"type": "text", "text": msg["content"], "cache_control": {"type": "ephemeral"}}],
+                }
+
+        # 3. Second-to-last user/tool message (the conversation prefix that
+        #    doesn't change between rounds). The last message is the new one.
+        if len(user_indices) >= 3:
             idx = user_indices[-2]
             msg = messages[idx]
             if isinstance(msg["content"], list) and msg["content"]:
