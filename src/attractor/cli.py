@@ -16,13 +16,40 @@ import os
 import sys
 
 
+_LOG_FMT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+
 def _setup_logging(verbose: bool = False) -> None:
     level = logging.DEBUG if verbose or os.environ.get("LOG_LEVEL", "").upper() == "DEBUG" else logging.INFO
     logging.basicConfig(
         level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        format=_LOG_FMT,
         datefmt="%H:%M:%S",
     )
+
+
+def _add_file_logging(log_dir: str) -> str:
+    """Add a file handler to the root logger. Returns the log file path."""
+    from datetime import datetime
+    os.makedirs(log_dir, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_path = os.path.join(log_dir, f"factory-{ts}.log")
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)  # always capture full detail
+    file_handler.setFormatter(_StripAnsiFormatter(_LOG_FMT, datefmt="%Y-%m-%d %H:%M:%S"))
+    logging.getLogger().addHandler(file_handler)
+    return log_path
+
+
+class _StripAnsiFormatter(logging.Formatter):
+    """Formatter that strips ANSI escape codes for clean log files."""
+
+    import re
+    _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+    def format(self, record: logging.LogRecord) -> str:
+        result = super().format(record)
+        return self._ANSI_RE.sub("", result)
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +74,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
         config.model = args.model
     if args.pipeline:
         config.dotfile = args.pipeline
+
+    # Add file logging now that we know the output directory
+    log_dir = os.path.join(config.output_dir, "logs")
+    log_path = _add_file_logging(log_dir)
+    logging.getLogger(__name__).info("Logging to %s", log_path)
 
     outcome = run_factory(config=config)
 
