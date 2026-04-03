@@ -1,0 +1,57 @@
+digraph DarkFactory {
+    graph [
+        goal="Process all specs in the input directory and produce reviewable artifacts",
+        label="Dark Factory",
+        default_max_retries=5
+    ]
+    rankdir=TB
+
+    // -- boundary nodes --
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare,  label="Exit"]
+
+    // -- ingestion --
+    ingest [shape=parallelogram, type="tool", label="Ingest Specs", timeout=120]
+
+    // -- triage --
+    triage [shape=box, label="Triage", timeout=300, reasoning_effort="high"]
+
+    // -- parallel fan-out --
+    parallel_fanout [shape=component, label="Fan Out Work Items"]
+
+    // -- per-work-item stages --
+    understand [shape=box, label="Understand", timeout=600, fidelity="full", reasoning_effort="high"]
+    plan       [shape=box, label="Plan",       timeout=300, fidelity="full", reasoning_effort="high"]
+    implement  [shape=box, label="Implement",  timeout=1800, fidelity="full", max_retries=0]
+    verify     [shape=parallelogram, type="tool", label="Verify", timeout=600]
+
+    // -- routing --
+    check_result [shape=diamond, label="Verification passed?"]
+
+    // -- failure path --
+    diagnose [shape=box, label="Diagnose", timeout=300, fidelity="full", reasoning_effort="high"]
+    fix      [shape=box, label="Fix",      timeout=900, fidelity="full", max_retries=5, retry_target="diagnose"]
+
+    // -- quarantine & package --
+    quarantine [shape=parallelogram, type="tool", label="Quarantine", timeout=120]
+    package    [shape=parallelogram, type="tool", label="Package",    timeout=120]
+
+    // -- fan-in --
+    fan_in [shape=tripleoctagon, label="Fan In"]
+
+    // -- integration & reporting --
+    integrate [shape=box, label="Integrate", timeout=900, fidelity="compact", reasoning_effort="high"]
+    report    [shape=box, label="Report",    timeout=300, fidelity="compact"]
+
+    // -- edges --
+    start -> ingest -> triage -> parallel_fanout
+    parallel_fanout -> understand -> plan -> implement -> verify -> check_result
+    check_result -> package    [label="pass", condition="$verification_passed=true"]
+    check_result -> diagnose   [label="fail", condition="$verification_passed!=true"]
+    diagnose -> fix
+    fix -> verify              [label="retry"]
+    fix -> quarantine          [label="retries exhausted", condition="$retries_exhausted=true"]
+    package -> fan_in
+    quarantine -> fan_in
+    fan_in -> integrate -> report -> exit
+}

@@ -1,0 +1,122 @@
+digraph DarkFactorySequential {
+    graph [
+        goal="Process all specs sequentially, each building on the previous result",
+        label="Dark Factory (Sequential)",
+        default_max_retries=5
+    ]
+    rankdir=TB
+
+    // -- boundary nodes --
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare,  label="Exit"]
+
+    // -- ingestion --
+    ingest [shape=parallelogram, type="tool", label="Ingest Specs", timeout=120]
+
+    // -- triage (orders work items by dependency) --
+    triage [
+        shape=box,
+        label="Triage & Order",
+        prompt="Analyze the work items in $work_items. For each item, identify which files and modules in the codebase it will likely touch. Determine dependencies between work items. Order them so that each item builds on the results of previous items. Write the ordered list to $triaged_items.",
+        timeout=300,
+        reasoning_effort="high"
+    ]
+
+    // -- sequential loop --
+    next_item [shape=diamond, label="More work items?"]
+
+    // -- per-work-item stages --
+    understand [
+        shape=box,
+        label="Understand",
+        prompt="You are processing work item $current_item.\n\nHere is the full spec (do NOT re-read it from disk — it is provided here in full):\n\n$current_spec\n\nIMPORTANT RULES:\n- This is an ANALYSIS step only. Do NOT create, modify, or write any files. Do NOT run mkdir, write_file, or any commands that change the filesystem.\n- Only analyze THIS spec. Do not read other specs in the specs/ directory.\n- Do not explore /opt/software-factory/ — that is the factory's own code, not the project.\n- Do NOT install packages, compilers, or toolchains. Do NOT run apt-get, curl, rustup, pip install, or similar.\n- Focus ONLY on reading and understanding existing source code in /workspace/output/.\n\nExamine the existing codebase in /workspace/output/ to understand the current state of the files and modules this spec affects. Write a structured understanding document that includes: (1) what exists today, (2) what needs to change, (3) risks and edge cases, (4) acceptance criteria restated as testable assertions.",
+        timeout=600,
+        fidelity="full",
+        reasoning_effort="high"
+    ]
+
+    plan [
+        shape=box,
+        label="Plan",
+        prompt="You are processing work item $current_item.\n\nHere is the full spec (already provided — do NOT re-read from disk):\n\n$current_spec\n\nHere is the understanding of the current codebase state:\n\n$understanding\n\nBased on the spec and understanding above, create a detailed implementation plan for THIS spec only. List every file to create or modify, describe the changes for each file, specify the order of changes, and identify how to verify each change.\n\nDo NOT install packages, compilers, or toolchains in this step.",
+        timeout=300,
+        fidelity="full",
+        reasoning_effort="high"
+    ]
+
+    implement [
+        shape=box,
+        label="Implement",
+        prompt="You are processing work item $current_item.\n\nHere is the full spec (already provided — do NOT re-read from disk):\n\n$current_spec\n\nIMPORTANT RULES:\n- Only implement THIS spec. Do not implement other specs.\n- Do not explore /opt/software-factory/.\n- All code MUST be written under /workspace/output/. Do NOT write files to /workspace/ directly.\n- Do NOT re-read spec files from disk.\n\nExecute the implementation plan below. Make the code changes described. Follow existing code patterns and conventions.\n\n$plan",
+        timeout=1800,
+        fidelity="full",
+        max_retries=0
+    ]
+
+    verify [
+        shape=box,
+        label="Verify",
+        output_key="verification_result",
+        prompt="You are verifying work item $current_item.\n\nHere is the full spec (do NOT re-read from disk):\n\n$current_spec\n\nThe implementation is complete. Your job is to verify it meets ALL acceptance criteria in the spec.\n\nSTEPS:\n1. Run the project build: $build_command\n2. Run the project tests: $test_command\n3. Run the project linter: $lint_command\n4. Check EACH acceptance criterion in the spec. If the spec requires running a script (e.g. an integration test), run it.\n5. All commands must be run from /workspace/output/ or use paths relative to it.\n\nAfter all checks, end your response with a summary:\n- For each acceptance criterion: PASS or FAIL with evidence.\n- End with exactly VERDICT: PASS (all criteria met) or VERDICT: FAIL (with list of failures).\n\nIMPORTANT RULES:\n- Do NOT modify any code or files. Only read files and run commands.\n- Do NOT install packages (apt-get, dnf, pip, etc.). All required tools are already installed.\n- Do NOT repeat checks you have already done. Be efficient.\n- If a test fails, report it and move on. Do not retry or investigate endlessly.",
+        timeout=600,
+        fidelity="full"
+    ]
+
+    // -- routing --
+    check_result [shape=diamond, label="Verification passed?"]
+
+    // -- failure path --
+    diagnose [
+        shape=box,
+        label="Diagnose",
+        prompt="You are processing work item $current_item.\n\nHere is the full spec (already provided — do NOT re-read from disk):\n\n$current_spec\n\nVerification failed. Analyze the output in $verification_result. Identify the root cause of each failure. Determine whether the failures are fixable. Write a diagnosis with a clear fix strategy for each fixable issue.\n\nIMPORTANT: Only fix issues related to THIS spec. Do not explore /opt/software-factory/.",
+        timeout=300,
+        fidelity="full",
+        reasoning_effort="high"
+    ]
+
+    fix [
+        shape=box,
+        label="Fix",
+        prompt="You are processing work item $current_item.\n\nHere is the full spec (already provided — do NOT re-read from disk):\n\n$current_spec\n\nApply the fixes described in $diagnosis. Only modify files related to this spec.\n\nIMPORTANT: Do not explore /opt/software-factory/.",
+        timeout=900,
+        fidelity="full",
+        max_retries=5,
+        retry_target="diagnose"
+    ]
+
+    // -- quarantine, package & commit --
+    quarantine [shape=parallelogram, type="tool", label="Quarantine", timeout=120]
+    package    [shape=parallelogram, type="tool", label="Package",    timeout=120]
+    commit     [shape=parallelogram, type="tool", label="Commit",     timeout=120]
+
+    // -- reporting --
+    report [
+        shape=box,
+        label="Report",
+        prompt="Generate the morning report. Include: (1) Executive summary: how many items succeeded, failed, have conflicts. (2) For each successful item: title, summary, files modified. (3) For each quarantined item: title, what was tried, why it failed. (4) Recommendations. Write the report to output/report.md.",
+        timeout=300,
+        fidelity="compact"
+    ]
+
+    // -- edges --
+    start -> ingest -> triage -> next_item
+
+    // loop: pick next work item or finish
+    next_item -> understand [label="yes", condition="$has_next_item=true"]
+    next_item -> report     [label="no",  condition="$has_next_item!=true"]
+
+    // per-item pipeline
+    understand -> plan -> implement -> verify -> check_result
+    check_result -> package    [label="pass", condition="$verification_passed=true"]
+    check_result -> diagnose   [label="fail", condition="$verification_passed!=true"]
+    diagnose -> fix
+    fix -> verify              [label="retry"]
+    fix -> quarantine          [label="retries exhausted", condition="$retries_exhausted=true"]
+
+    // after package, commit then loop back; quarantine skips commit
+    package    -> commit -> next_item
+    quarantine -> next_item
+
+    report -> exit
+}
