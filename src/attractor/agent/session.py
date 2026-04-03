@@ -52,6 +52,8 @@ class SessionConfig:
     loop_detection_window: int = 4
     max_output_chars: int = 100_000
     truncation_head_ratio: float = 0.3
+    compaction_threshold_chars: int = 200_000
+    compaction_preserve_recent: int = 6
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +167,136 @@ def truncate_tool_output(
         f"[... {omitted} characters omitted from {tool_name} output ...]\n\n"
         f"{tail}"
     )
+
+
+def _estimate_turn_chars(turn: Turn) -> int:
+    """Estimate the character count a turn contributes to the LLM request."""
+    if isinstance(turn, UserTurn):
+        return len(turn.content)
+    if isinstance(turn, SteeringTurn):
+        return len(turn.content) + 20
+    if isinstance(turn, AssistantTurn):
+        msg = turn.message
+        if isinstance(msg.content, str):
+            return len(msg.content)
+        total = 0
+        for part in msg.content:
+            if part.text:
+                total += len(part.text)
+            if part.tool_call:
+                total += len(part.tool_call.name) + len(part.tool_call.arguments)
+        return total
+    if isinstance(turn, ToolResultsTurn):
+        return sum(len(r.content) for r in turn.results)
+    return 0
+
+
+def _summarize_tool_result(tool_name: str, tool_args: str, output: str) -> str:
+    """Produce a compact one-line summary of a tool call result."""
+    try:
+        args = json.loads(tool_args) if isinstance(tool_args, str) else tool_args
+    except Exception:
+        args = {}
+
+    n = len(output)
+    if tool_name == "read_file":
+        path = args.get("path", "?")
+        return f"[Read file: {path} ({n} chars)]"
+    if tool_name == "write_file":
+        path = args.get("path", "?")
+        return f"[Wrote file: {path} ({n} chars)]"
+    if tool_name == "edit_file":
+        path = args.get("path", "?")
+        return f"[Edited file: {path}]"
+    if tool_name == "shell":
+        cmd = str(args.get("command", "?"))[:100]
+        # Try to extract exit code from the output tail
+        lines = output.rstrip().rsplit("\n", 1)
+        last = lines[-1] if lines else ""
+        if last.startswith("Exit code:"):
+            return f"[Ran: {cmd} → {last}]"
+        return f"[Ran: {cmd} ({n} chars output)]"
+    if tool_name == "grep":
+        pat = args.get("pattern", "?")
+        return f"[Searched for: {pat} ({n} chars)]"
+    if tool_name == "glob":
+        pat = args.get("pattern", "?")
+        return f"[Found files matching: {pat} ({n} chars)]"
+    return f"[Called {tool_name} ({n} chars)]"
+
+
+def _compact_history(history: list[Turn], preserve_recent: int) -> list[Turn]:
+    """Return a compacted copy of history.
+
+    Old assistant+tool_results pairs are replaced with compact summaries.
+    The last ``preserve_recent`` such pairs are kept verbatim.
+    """
+    # Identify indices of (AssistantTurn, ToolResultsTurn) pairs
+    pairs: list[tuple[int, int]] = []
+    i = 0
+    while i < len(history) - 1:
+        if isinstance(history[i], AssistantTurn) and isinstance(history[i + 1], ToolResultsTurn):
+            pairs.append((i, i + 1))
+            i += 2
+        else:
+            i += 1
+
+    # Determine which pairs to compact (all but the last preserve_recent)
+    compact_count = max(0, len(pairs) - preserve_recent)
+    if compact_count == 0:
+        return history
+
+    compact_set: set[int] = set()
+    for ai, ti in pairs[:compact_count]:
+        compact_set.add(ai)
+        compact_set.add(ti)
+
+    # Build a map from tool_call_id → (tool_name, tool_args) from assistant turns
+    tool_call_info: dict[str, tuple[str, str]] = {}
+    for ai, _ in pairs[:compact_count]:
+        aturn = history[ai]
+        assert isinstance(aturn, AssistantTurn)
+        if isinstance(aturn.message.content, list):
+            for part in aturn.message.content:
+                if part.kind == ContentKind.TOOL_CALL and part.tool_call:
+                    tool_call_info[part.tool_call.id] = (
+                        part.tool_call.name,
+                        part.tool_call.arguments,
+                    )
+
+    # Build compacted history
+    result: list[Turn] = []
+    chars_saved = 0
+    for idx, turn in enumerate(history):
+        if idx not in compact_set:
+            result.append(turn)
+            continue
+
+        if isinstance(turn, AssistantTurn):
+            # Keep assistant turn as-is (tool_call parts are small,
+            # and any text reasoning is worth preserving)
+            result.append(turn)
+        elif isinstance(turn, ToolResultsTurn):
+            compacted_results = []
+            for r in turn.results:
+                name, args = tool_call_info.get(r.tool_call_id, ("?", "{}"))
+                summary = _summarize_tool_result(name, args, r.content)
+                chars_saved += len(r.content) - len(summary)
+                compacted_results.append(ToolResult(
+                    tool_call_id=r.tool_call_id,
+                    content=summary,
+                    is_error=r.is_error,
+                ))
+            result.append(ToolResultsTurn(
+                results=compacted_results,
+                timestamp=turn.timestamp,
+            ))
+
+    logger.info(
+        "Context compaction: compacted %d/%d tool rounds, saved ~%d chars",
+        compact_count, len(pairs), chars_saved,
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -371,8 +503,17 @@ class Session:
         if self._system_prompt:
             messages.append(Message.system(self._system_prompt))
 
+        # Compact history if conversation is getting large
+        total_chars = sum(_estimate_turn_chars(t) for t in self.history)
+        if total_chars > self.config.compaction_threshold_chars:
+            effective_history = _compact_history(
+                self.history, self.config.compaction_preserve_recent,
+            )
+        else:
+            effective_history = self.history
+
         # Convert history to messages
-        for turn in self.history:
+        for turn in effective_history:
             if isinstance(turn, UserTurn):
                 messages.append(Message.user(turn.content))
             elif isinstance(turn, AssistantTurn):
