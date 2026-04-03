@@ -267,6 +267,19 @@ def run(graph: Graph, config: Optional[PipelineConfig] = None) -> Outcome:
         # Execute with retry
         outcome = execute_with_retry(handler, node, context, graph, backoff, logs_root)
 
+        # Track retries exhausted: when a node with retry_target fails
+        # after all attempts, set a context flag so the graph can route
+        # to quarantine instead of looping forever.
+        if outcome.status == StageStatus.FAIL and node.retry_target:
+            count_key = f"_retry_count.{node.id}"
+            count = int(context.get(count_key) or 0) + 1
+            context.set(count_key, str(count))
+            if count >= node.max_retries + 1:
+                context.set("retries_exhausted", "true")
+                logger.info("Node %s: retries exhausted (%d attempts)", node.id, count)
+            else:
+                context.set("retries_exhausted", "false")
+
         logger.info(
             "\033[31mNode %s finished: status=%s%s\033[0m",
             node.id,
