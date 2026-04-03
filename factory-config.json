@@ -1,0 +1,19 @@
+{
+    "specs_dir": "specs",
+    "output_dir": "output",
+    "verify": {
+        "test_command": "python -m pytest",
+        "lint_command": "",
+        "typecheck_command": "",
+        "build_command": ""
+    },
+    "limits": {
+        "max_retries": 3,
+        "implement_timeout": 300,
+        "verify_timeout": 120,
+        "total_timeout": 1800
+    },
+    "provider": "anthropic",
+    "model": "",
+    "dotfile": "pipelines/dark_factory.dot"
+}
