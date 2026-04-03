@@ -75,6 +75,30 @@ def expand_variables(template: str, node: Node, context: Context, graph: Graph) 
 
 
 # ---------------------------------------------------------------------------
+# Verdict parsing
+# ---------------------------------------------------------------------------
+
+_VERDICT_RE = re.compile(r"verdict\s*:\s*(pass|fail)", re.IGNORECASE)
+
+
+def _parse_verdict(text: str) -> bool:
+    """Parse a PASS/FAIL verdict from verification output.
+
+    Looks for the last occurrence of "VERDICT: PASS" or "VERDICT: FAIL"
+    (case-insensitive). Using the *last* match avoids false positives from
+    test output earlier in the text that might contain those words.
+
+    Falls back to False (fail) if no verdict line is found.
+    """
+    matches = list(_VERDICT_RE.finditer(text))
+    if matches:
+        return matches[-1].group(1).lower() == "pass"
+    # No explicit verdict found — default to fail
+    logger.warning("No 'VERDICT: PASS/FAIL' found in verification output; defaulting to FAIL")
+    return False
+
+
+# ---------------------------------------------------------------------------
 # CodergenHandler
 # ---------------------------------------------------------------------------
 
@@ -121,17 +145,8 @@ class CodergenHandler(Handler):
                         context.set(node.output_key, str(result))
                     # If this is a verify node, parse the verdict to set verification_passed
                     if node.output_key == "verification_result":
-                        text = str(result).lower()
-                        # Look for explicit verdict, fall back to heuristics
-                        if "verdict: pass" in text or "verdict:pass" in text:
-                            context.set("verification_passed", "true")
-                        elif "verdict: fail" in text or "verdict:fail" in text:
-                            context.set("verification_passed", "false")
-                        elif "all criteria met" in text or "all checks passed" in text:
-                            context.set("verification_passed", "true")
-                        else:
-                            # Default to fail if we can't determine
-                            context.set("verification_passed", "false")
+                        context.set("verification_passed",
+                                    "true" if _parse_verdict(str(result)) else "false")
                     # Write response
                     if logs_root:
                         log_dir = logs_root / node.id
