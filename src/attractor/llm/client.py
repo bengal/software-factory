@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import random
+import time
 from typing import Any, AsyncIterator, Callable
 
 from attractor.llm.providers.base import ProviderAdapter
 from attractor.llm.types import Request, Response, StreamEvent
+
+logger = logging.getLogger(__name__)
 
 # Middleware: a callable that wraps a provider's complete() call.
 # It receives (request, next_fn) where next_fn calls the actual provider.
@@ -51,8 +56,18 @@ class Client:
 
     # -- main API ----------------------------------------------------------
 
-    def complete(self, request: Request) -> Response:
-        """Send a completion request, running it through middleware."""
+    def complete(
+        self,
+        request: Request,
+        max_retries: int = 5,
+        initial_delay: float = 2.0,
+        max_delay: float = 120.0,
+    ) -> Response:
+        """Send a completion request, running it through middleware.
+
+        Retries on transient errors (rate limits, connection errors,
+        timeouts, server errors) with exponential backoff and jitter.
+        """
         provider_name = request.provider or self._default_provider
         adapter = self.get_provider(provider_name)
 
@@ -68,7 +83,23 @@ class Client:
                 return lambda req: m(req, nxt)
             fn = make_wrapped(mw, outer_fn)
 
-        return fn(request)
+        delay = initial_delay
+        for attempt in range(max_retries + 1):
+            try:
+                return fn(request)
+            except Exception as exc:
+                if attempt >= max_retries or not _is_retryable(exc):
+                    raise
+                jitter = random.uniform(0, delay * 0.25)
+                wait = delay + jitter
+                logger.warning(
+                    "LLM API error (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt + 1, max_retries + 1, wait, exc,
+                )
+                time.sleep(wait)
+                delay = min(delay * 2, max_delay)
+
+        raise RuntimeError("unreachable")  # pragma: no cover
 
     async def stream(self, request: Request) -> AsyncIterator[StreamEvent]:
         """Stream a completion request, yielding events."""
@@ -92,6 +123,34 @@ class Client:
         API-key lookup to each provider adapter.
         """
         return cls(default_provider=provider, model=model)
+
+
+_RETRYABLE_EXCEPTION_NAMES = frozenset({
+    "RateLimitError",
+    "APIConnectionError",
+    "APITimeoutError",
+    "InternalServerError",
+    "ServiceUnavailableError",
+    "TooManyRequestsError",
+    "ResourceExhausted",
+})
+
+_RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504, 529})
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Check whether an exception is transient and worth retrying."""
+    # Match by exception class name so we don't need to import every SDK
+    if type(exc).__name__ in _RETRYABLE_EXCEPTION_NAMES:
+        return True
+    # HTTP status code on the exception object (Anthropic, OpenAI, httpx)
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    if isinstance(status, int) and status in _RETRYABLE_STATUS_CODES:
+        return True
+    # Connection and timeout errors from underlying HTTP libraries
+    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        return True
+    return False
 
 
 def _create_builtin_provider(name: str, model: str | None = None) -> ProviderAdapter:
