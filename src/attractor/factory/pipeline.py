@@ -354,7 +354,12 @@ def _load_manifest(output_dir: str) -> dict[str, str]:
         return {}
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Corrupt manifest at %s (%s) — all specs will be reprocessed. "
+            "Delete the file to silence this warning.",
+            path, exc,
+        )
         return {}
 
 
@@ -671,7 +676,8 @@ class CommitHandler(Handler):
             return
         try:
             pending = json.loads(pending_raw) if isinstance(pending_raw, str) else pending_raw
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to parse pending_checksums: %s", exc)
             return
         checksum = pending.get(item_id)
         if not checksum:
