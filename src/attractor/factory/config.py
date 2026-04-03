@@ -25,6 +25,7 @@ class LimitsConfig:
     verify_timeout: int = 120    # seconds
     total_timeout: int = 1800    # seconds
     max_tokens: int = 0          # 0 = unlimited
+    max_cost_usd: float = 0.0    # 0 = unlimited; warn when exceeded
 
 
 @dataclass
@@ -68,6 +69,7 @@ class FactoryConfig:
             verify_timeout=limits_data.get("verify_timeout", 120),
             total_timeout=limits_data.get("total_timeout", 1800),
             max_tokens=limits_data.get("max_tokens", 0),
+            max_cost_usd=limits_data.get("max_cost_usd", 0.0),
         )
 
         return cls(
@@ -97,6 +99,7 @@ class FactoryConfig:
                 "verify_timeout": self.limits.verify_timeout,
                 "total_timeout": self.limits.total_timeout,
                 "max_tokens": self.limits.max_tokens,
+                "max_cost_usd": self.limits.max_cost_usd,
             },
             "provider": self.provider,
             "model": self.model,

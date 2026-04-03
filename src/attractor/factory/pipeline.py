@@ -266,6 +266,12 @@ class FactoryBackend(CodergenBackend):
                 f"Token limit exceeded: {self.total_tokens:,} >= {token_limit:,}"
             )
 
+        cost_limit = self.config.limits.max_cost_usd
+        if cost_limit and self.total_cost >= cost_limit:
+            raise TokenLimitExceeded(
+                f"Cost limit exceeded: ${self.total_cost:.4f} >= ${cost_limit:.2f}"
+            )
+
         max_rounds = self._NODE_TOOL_ROUNDS.get(node.id, 20)
 
         # Log which work item this node is processing and relevant context
@@ -303,6 +309,14 @@ class FactoryBackend(CodergenBackend):
             node.id, usage.input_tokens, usage.output_tokens, node_cost,
             session.tool_rounds_used, self.total_cost,
         )
+
+        # Warn when approaching cost limit
+        cost_limit = self.config.limits.max_cost_usd
+        if cost_limit and self.total_cost >= cost_limit * 0.8:
+            logger.warning(
+                "\033[31mCost warning: $%.4f spent of $%.2f budget (%.0f%%)\033[0m",
+                self.total_cost, cost_limit, (self.total_cost / cost_limit) * 100,
+            )
 
         session.close()
         return result
