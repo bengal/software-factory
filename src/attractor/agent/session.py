@@ -52,7 +52,7 @@ class SessionConfig:
     loop_detection_window: int = 4
     max_output_chars: int = 100_000
     truncation_head_ratio: float = 0.3
-    compaction_threshold_chars: int = 200_000
+    compaction_threshold_chars: int = 100_000
     compaction_preserve_recent: int = 6
 
 
