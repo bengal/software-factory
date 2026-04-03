@@ -225,11 +225,14 @@ def _summarize_tool_result(tool_name: str, tool_args: str, output: str) -> str:
     return f"[Called {tool_name} ({n} chars)]"
 
 
-def _compact_history(history: list[Turn], preserve_recent: int) -> list[Turn]:
-    """Return a compacted copy of history.
+def _compact_history_in_place(history: list[Turn], preserve_recent: int) -> int:
+    """Compact old tool result turns in-place.
 
-    Old assistant+tool_results pairs are replaced with compact summaries.
-    The last ``preserve_recent`` such pairs are kept verbatim.
+    Replaces tool result content with compact summaries for all but the
+    last ``preserve_recent`` assistant+tool_results pairs.  Skips turns
+    that are already compacted (content starts with ``[``).
+
+    Returns the number of chars saved by this call.
     """
     # Identify indices of (AssistantTurn, ToolResultsTurn) pairs
     pairs: list[tuple[int, int]] = []
@@ -244,12 +247,7 @@ def _compact_history(history: list[Turn], preserve_recent: int) -> list[Turn]:
     # Determine which pairs to compact (all but the last preserve_recent)
     compact_count = max(0, len(pairs) - preserve_recent)
     if compact_count == 0:
-        return history
-
-    compact_set: set[int] = set()
-    for ai, ti in pairs[:compact_count]:
-        compact_set.add(ai)
-        compact_set.add(ti)
+        return 0
 
     # Build a map from tool_call_id → (tool_name, tool_args) from assistant turns
     tool_call_info: dict[str, tuple[str, str]] = {}
@@ -264,39 +262,41 @@ def _compact_history(history: list[Turn], preserve_recent: int) -> list[Turn]:
                         part.tool_call.arguments,
                     )
 
-    # Build compacted history
-    result: list[Turn] = []
+    # Compact tool result turns in-place
     chars_saved = 0
-    for idx, turn in enumerate(history):
-        if idx not in compact_set:
-            result.append(turn)
-            continue
-
-        if isinstance(turn, AssistantTurn):
-            # Keep assistant turn as-is (tool_call parts are small,
-            # and any text reasoning is worth preserving)
-            result.append(turn)
-        elif isinstance(turn, ToolResultsTurn):
-            compacted_results = []
-            for r in turn.results:
-                name, args = tool_call_info.get(r.tool_call_id, ("?", "{}"))
-                summary = _summarize_tool_result(name, args, r.content)
-                chars_saved += len(r.content) - len(summary)
-                compacted_results.append(ToolResult(
-                    tool_call_id=r.tool_call_id,
-                    content=summary,
-                    is_error=r.is_error,
-                ))
-            result.append(ToolResultsTurn(
+    newly_compacted = 0
+    for _, ti in pairs[:compact_count]:
+        turn = history[ti]
+        assert isinstance(turn, ToolResultsTurn)
+        compacted_results = []
+        turn_saved = 0
+        for r in turn.results:
+            # Skip already-compacted results
+            if r.content.startswith("["):
+                compacted_results.append(r)
+                continue
+            name, args = tool_call_info.get(r.tool_call_id, ("?", "{}"))
+            summary = _summarize_tool_result(name, args, r.content)
+            turn_saved += len(r.content) - len(summary)
+            compacted_results.append(ToolResult(
+                tool_call_id=r.tool_call_id,
+                content=summary,
+                is_error=r.is_error,
+            ))
+        if turn_saved > 0:
+            history[ti] = ToolResultsTurn(
                 results=compacted_results,
                 timestamp=turn.timestamp,
-            ))
+            )
+            chars_saved += turn_saved
+            newly_compacted += 1
 
-    logger.info(
-        "Context compaction: compacted %d/%d tool rounds, saved ~%d chars",
-        compact_count, len(pairs), chars_saved,
-    )
-    return result
+    if newly_compacted > 0:
+        logger.info(
+            "Context compaction: compacted %d new rounds (%d/%d total), saved ~%d chars",
+            newly_compacted, compact_count, len(pairs), chars_saved,
+        )
+    return chars_saved
 
 
 # ---------------------------------------------------------------------------
@@ -503,17 +503,15 @@ class Session:
         if self._system_prompt:
             messages.append(Message.system(self._system_prompt))
 
-        # Compact history if conversation is getting large
+        # Compact history in-place if conversation is getting large
         total_chars = sum(_estimate_turn_chars(t) for t in self.history)
         if total_chars > self.config.compaction_threshold_chars:
-            effective_history = _compact_history(
+            _compact_history_in_place(
                 self.history, self.config.compaction_preserve_recent,
             )
-        else:
-            effective_history = self.history
 
         # Convert history to messages
-        for turn in effective_history:
+        for turn in self.history:
             if isinstance(turn, UserTurn):
                 messages.append(Message.user(turn.content))
             elif isinstance(turn, AssistantTurn):
