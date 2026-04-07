@@ -154,6 +154,44 @@ _register(
     ),
 )
 
+# -- Mistral -----------------------------------------------------------------
+
+_register(
+    ModelInfo(
+        id="mistral-large-latest",
+        provider="mistral",
+        display_name="Mistral Large",
+        context_window=128_000,
+        max_output_tokens=8_192,
+        supports_vision=False,
+        is_latest=True,
+    ),
+    ModelInfo(
+        id="mistral-small-latest",
+        provider="mistral",
+        display_name="Mistral Small",
+        context_window=128_000,
+        max_output_tokens=8_192,
+        supports_vision=False,
+    ),
+    ModelInfo(
+        id="codestral-latest",
+        provider="mistral",
+        display_name="Codestral",
+        context_window=256_000,
+        max_output_tokens=8_192,
+        supports_vision=False,
+    ),
+    ModelInfo(
+        id="devstral-latest",
+        provider="mistral",
+        display_name="Devstral",
+        context_window=256_000,
+        max_output_tokens=8_192,
+        supports_vision=False,
+    ),
+)
+
 
 # ---------------------------------------------------------------------------
 # Public API

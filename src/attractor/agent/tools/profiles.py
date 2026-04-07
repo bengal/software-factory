@@ -259,6 +259,7 @@ _DEFAULT_MODELS = {
     "vertex": "claude-opus-4-6",
     "openai": "gpt-4o",
     "gemini": "gemini-2.5-pro",
+    "mistral": "mistral-large-latest",
 }
 
 
@@ -286,5 +287,7 @@ def create_profile(
         return OpenAIProfile(model_name, env)
     elif provider == "gemini":
         return GeminiProfile(model_name, env)
+    elif provider == "mistral":
+        return OpenAIProfile(model_name, env)
     else:
         raise ValueError(f"Unknown provider: {provider!r}")

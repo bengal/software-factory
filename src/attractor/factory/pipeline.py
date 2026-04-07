@@ -193,6 +193,22 @@ class FactoryBackend(CodergenBackend):
             "input": 0.80, "output": 4.0,
             "cache_read": 0.08, "cache_write": 1.0,
         },
+        "mistral-large": {
+            "input": 2.0, "output": 6.0,
+            "cache_read": 0, "cache_write": 0,
+        },
+        "mistral-small": {
+            "input": 0.2, "output": 0.6,
+            "cache_read": 0, "cache_write": 0,
+        },
+        "codestral": {
+            "input": 0.3, "output": 0.9,
+            "cache_read": 0, "cache_write": 0,
+        },
+        "devstral": {
+            "input": 0.1, "output": 0.3,
+            "cache_read": 0, "cache_write": 0,
+        },
     }
 
     def __init__(self, config: FactoryConfig, working_dir: str):

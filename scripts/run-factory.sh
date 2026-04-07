@@ -122,7 +122,7 @@ for var in LOG_LEVEL; do
 done
 
 # Direct API keys
-for var in ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY; do
+for var in ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY MISTRAL_API_KEY; do
     eval "val=\${$var:-}"
     if [ -n "$val" ]; then
         ENV_ARGS="$ENV_ARGS -e $var"

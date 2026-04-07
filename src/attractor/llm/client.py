@@ -164,6 +164,9 @@ def _create_builtin_provider(name: str, model: str | None = None) -> ProviderAda
     elif name == "gemini":
         from attractor.llm.providers.gemini import GeminiAdapter
         return GeminiAdapter(model=model)
+    elif name == "mistral":
+        from attractor.llm.providers.mistral import MistralAdapter
+        return MistralAdapter(model=model)
     elif name == "vertex":
         from attractor.llm.providers.vertex import VertexAdapter
         return VertexAdapter(model=model)
