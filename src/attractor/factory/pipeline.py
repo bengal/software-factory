@@ -211,12 +211,24 @@ class FactoryBackend(CodergenBackend):
         },
     }
 
+    # Map each LLM node to a model tier.
+    _NODE_MODEL_TIER: dict[str, str] = {
+        "triage": "fast",
+        "understand": "strong",
+        "plan": "strong",
+        "implement": "default",
+        "diagnose": "strong",
+        "fix": "default",
+        "report": "default",
+    }
+
     def __init__(self, config: FactoryConfig, working_dir: str):
         self.config = config
         self.working_dir = working_dir
         self._env = LocalExecutionEnvironment(working_dir=working_dir)
         self._client: Client | None = None
         self._total_usage = Usage()
+        self._total_cost: float = 0.0
 
     @property
     def total_tokens(self) -> int:
@@ -224,31 +236,42 @@ class FactoryBackend(CodergenBackend):
 
     @property
     def total_cost(self) -> float:
-        return self._estimate_cost(self._total_usage)
+        return self._total_cost
 
-    def _get_pricing(self) -> dict[str, float]:
-        """Return pricing dict for the configured model."""
-        model = self.config.model or ""
+    def _get_pricing(self, model: str) -> dict[str, float]:
+        """Return pricing dict for the given model."""
         for prefix, pricing in self._PRICING.items():
             if model.startswith(prefix):
                 return pricing
         # Fallback to Sonnet pricing
         return self._PRICING["claude-sonnet-4"]
 
-    def _estimate_cost(self, usage: Usage) -> float:
+    def _estimate_cost(self, usage: Usage, model: str) -> float:
         """Estimate cost in USD for a Usage.
 
         Note: Vertex reports ``input_tokens`` as non-cached only, with
         ``cache_read_tokens`` and ``cache_write_tokens`` reported separately.
         So ``input_tokens`` already represents the uncached portion.
         """
-        p = self._get_pricing()
+        p = self._get_pricing(model)
         return (
             usage.input_tokens * p["input"]
             + usage.output_tokens * p["output"]
             + usage.cache_read_tokens * p["cache_read"]
             + usage.cache_write_tokens * p["cache_write"]
         ) / 1_000_000
+
+    def _resolve_model(self, node_id: str) -> str:
+        """Return the model to use for a given node.
+
+        Resolution order: models.<tier> → models.default → config.model
+        → provider default.
+        """
+        tier = self._NODE_MODEL_TIER.get(node_id, "default")
+        model = getattr(self.config.models, tier, "")
+        if not model and tier != "default":
+            model = self.config.models.default
+        return model or self.config.model
 
     def _get_client(self) -> Client:
         if self._client is None:
@@ -293,10 +316,12 @@ class FactoryBackend(CodergenBackend):
         # Log which work item this node is processing and relevant context
         self._log_node_context(node, context)
 
+        model = self._resolve_model(node.id)
+
         client = self._get_client()
         profile = create_profile(
             provider=self.config.provider,
-            model=self.config.model,
+            model=model,
             env=self._env,
         )
 
@@ -339,12 +364,14 @@ class FactoryBackend(CodergenBackend):
 
         usage = session.total_usage
         self._total_usage = self._total_usage + usage
-        node_cost = self._estimate_cost(usage)
+        node_cost = self._estimate_cost(usage, model)
+        self._total_cost += node_cost
         logger.info(
-            "Token usage: node=%s \033[33minput=%d output=%d cost=$%.4f\033[0m"
+            "Token usage: node=%s model=%s"
+            " \033[33minput=%d output=%d cost=$%.4f\033[0m"
             " tool_rounds=%d cumulative_cost=\033[33m$%.4f\033[0m",
-            node.id, usage.input_tokens, usage.output_tokens, node_cost,
-            session.tool_rounds_used, self.total_cost,
+            node.id, model, usage.input_tokens, usage.output_tokens,
+            node_cost, session.tool_rounds_used, self.total_cost,
         )
 
         # Warn when approaching cost limit

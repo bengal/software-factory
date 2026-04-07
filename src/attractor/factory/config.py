@@ -29,6 +29,19 @@ class LimitsConfig:
 
 
 @dataclass
+class ModelsConfig:
+    """Model tiers for the factory pipeline.
+
+    Each tier maps to a model appropriate for that level of task complexity.
+    Empty strings fall back to the top-level ``model`` field or the provider
+    default.
+    """
+    strong: str = ""   # Deep reasoning: understand, plan, diagnose
+    default: str = ""  # Solid coding: implement, fix, report
+    fast: str = ""     # Straightforward: triage
+
+
+@dataclass
 class FactoryConfig:
     """Top-level configuration for the dark factory.
 
@@ -40,6 +53,7 @@ class FactoryConfig:
     limits: LimitsConfig = field(default_factory=LimitsConfig)
     provider: str = "anthropic"
     model: str = ""
+    models: ModelsConfig = field(default_factory=ModelsConfig)
     dotfile: str = "pipelines/dark_factory_sequential.dot"
 
     @classmethod
@@ -72,6 +86,13 @@ class FactoryConfig:
             max_cost_usd=limits_data.get("max_cost_usd", 0.0),
         )
 
+        models_data = data.get("models", {})
+        models = ModelsConfig(
+            strong=models_data.get("strong", ""),
+            default=models_data.get("default", ""),
+            fast=models_data.get("fast", ""),
+        )
+
         return cls(
             specs_dir=data.get("specs_dir", "specs"),
             output_dir=data.get("output_dir", "output"),
@@ -79,6 +100,7 @@ class FactoryConfig:
             limits=limits,
             provider=data.get("provider", "anthropic"),
             model=data.get("model", ""),
+            models=models,
             dotfile=data.get("dotfile", "pipelines/dark_factory_sequential.dot"),
         )
 
@@ -103,5 +125,10 @@ class FactoryConfig:
             },
             "provider": self.provider,
             "model": self.model,
+            "models": {
+                "strong": self.models.strong,
+                "default": self.models.default,
+                "fast": self.models.fast,
+            },
             "dotfile": self.dotfile,
         }
